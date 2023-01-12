@@ -20,7 +20,7 @@ prevClose     = {}
 percenChange  = {} 
 filledOrders  = [] 
 BUY_LIMIT          = 10000 
-PERCENT_UP_LIMIT   = 2
+PERCENT_UP_LIMIT   = 1.1
 TRAIL_PERCENT      = "1.5"
 WAIT_SECOND        = 5
 
@@ -45,12 +45,12 @@ def on_open(ws):
     ws.send(json.dumps(message))
  
 def on_message(ws, message):
-    ## print(message)
     tick = json.loads(message)
     tkr = tick[0]["S"]
     lastTickPrice[tkr] = float(tick[0]["p"])
     percenChange[tkr] = round((lastTickPrice[tkr]/prevClose[tkr] - 1)*100,2) 
-    prevClose[ticker] = lastTickPrice[tkr]  
+    if percenChange[tkr] > 2  or percenChange[tkr] < -2:
+        print("--->"+tkr+ " "+percenChange[tkr])  
     
 
 def connectToAlpaca():
@@ -63,28 +63,37 @@ def posSize(ticker):
 def scan():
     for ticker, pc in percenChange.items():
         if pc > PERCENT_UP_LIMIT  and ticker not in filledOrders:
-            api.submit_order(ticker, posSize(ticker), "buy", "market", "ioc")
-            time.sleep(WAIT_SECOND)
-            try:
-                filled_qty = api.get_position(ticker).qty
-                time.sleep(WAIT_SECOND)
-                api.submit_order(ticker, int(filled_qty), "sell", "trailing_stop", "day", trail_percent = TRAIL_PERCENT)
-                filledOrders.append(ticker)
-            except Exception as e:
-                print(ticker, e)
+            trade(ticker, posSize(ticker), "buy", "market", "ioc",
+                                           "sell", "trailing_stop", "day")
         if pc < -1 * PERCENT_UP_LIMIT and ticker not in filledOrders:
-            api.submit_order(ticker, posSize(ticker), "sell", "market", "ioc")
-            time.sleep(WAIT_SECOND)
-            try:
-                filled_qty = api.get_position(ticker).qty
-                time.sleep(WAIT_SECOND)
-                api.submit_order(ticker, -1*int(filled_qty), "buy", "trailing_stop", "day", trail_percent = TRAIL_PERCENT)
-                filledOrders.append(ticker)
-            except Exception as e:
-                print(ticker, e)
+            trade(ticker, posSize(ticker), "sell", "market", "ioc",
+                                           "buy", "trailing_stop", "day")
+            
+def trade(symbol,qty,side,type,time_in_force,second_leg_side,second_leg_type,second_leg_time_in_force):
+    '''
+    api.submit_order(
+    symbol='AAPL',
+    qty=1,
+    side='buy',
+    type='market',
+    time_in_force='gtc')
+    '''
+    api.submit_order(symbol, qty, side, type, time_in_force)
+    time.sleep(WAIT_SECOND)
+    try:
+        filled_qty = api.get_position(symbol).qty
+        time.sleep(WAIT_SECOND)
+        if side == "buy":
+            filled = int(filled_qty)
+        if side == "sell":
+            filled = -1*int(filled_qty)
+        api.submit_order(symbol, filled, second_leg_side, second_leg_type, second_leg_time_in_force, trail_percent = TRAIL_PERCENT)
+        filledOrders.append(symbol)
+    except Exception as e:
+        print(ticker, e)
+
 
 ## Initialize
-
 yesterday = (datetime.now() - timedelta(1)).strftime('%Y-%m-%d')
 print(yesterday)
 history = historicalData(watchList, yesterday, timeframe="Day")
@@ -101,12 +110,15 @@ t = threading.Thread(target=connectToAlpaca, daemon=True)
 t.start()
 
 starttime = time.time()
-timeout = starttime + 1*60   ## minutes
+timeout = starttime + 180*60   ## minutes
+print("timeout: {}".format(timeout))
 while time.time() <= timeout:
     for ticker in watchList:
         print("{} % change = {}".format(ticker,percenChange[ticker]))
         scan()
-    time.sleep(60 - ((time.time() - starttime) % 60))
+    w = 60 - ((time.time() - starttime) % 60)
+    print("---")    
+    time.sleep(5)
 
 # Close all positions and cancell all orders at the end of the strategy  
 api.cancel_all_orders()
